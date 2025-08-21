@@ -6,10 +6,18 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "next lint",
+    "test": "vitest",
+    "test:ui": "vitest --ui",
+    "test:run": "vitest run",
+    "db:types": "supabase gen types typescript --local > lib/db/types.ts",
+    "security:check": "node scripts/security-check.js",
+    "security:audit": "npm audit && npm run security:check",
+    "pre-deploy": "npm run security:check && npm run lint && npm run test:run"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.55.0",
+    "crypto": "^1.0.1",
     "inngest": "^3.40.1",
     "next": "15.5.0",
     "react": "19.1.0",
