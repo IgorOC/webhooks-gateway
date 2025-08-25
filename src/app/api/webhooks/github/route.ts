@@ -95,6 +95,11 @@ function verifyGitHubSignature(
   const hmac = crypto.createHmac("sha256", secret);
   const digest = `sha256=${hmac.update(body, "utf8").digest("hex")}`;
 
+  // DEBUG: Adicione estes logs temporariamente
+  console.log("Signature recebida:", signature);
+  console.log("Signature calculada:", digest);
+  console.log("Secret usado:", secret);
+
   return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(digest));
 }
 

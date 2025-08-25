@@ -4,5 +4,7 @@ import { processWebhook } from "@/app/lib/inngest/functions";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
-  functions: [processWebhook],
+  functions: [
+    processWebhook
+  ],
 });
