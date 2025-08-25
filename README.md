@@ -136,9 +136,12 @@ Faça deploy para Vercel, Railway ou qualquer plataforma de hospedagem Node.js. 
 3. Configurar endpoint webhook do Inngest
 4. Atualizar URLs de webhook nos dashboards dos provedores
 
+Página Inicial
+<img width="1919" height="947" alt="Captura de tela 2025-08-25 160754" src="https://github.com/user-attachments/assets/8fbd96d0-c786-47a2-80f2-588fa50f5a08" />
+
+Dashboard
 <img width="1917" height="943" alt="image" src="https://github.com/user-attachments/assets/858fe518-a39f-4d34-b721-ca6be008130a" />
 
-<img width="1919" height="947" alt="Captura de tela 2025-08-25 160754" src="https://github.com/user-attachments/assets/8fbd96d0-c786-47a2-80f2-588fa50f5a08" />
 
 
 
