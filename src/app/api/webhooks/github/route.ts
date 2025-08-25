@@ -1,13 +1,20 @@
+export const runtime = "nodejs";
+
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
-import { getWebhookSource, insertWebhookEvent } from "../../../lib/db";
-import { enqueueWebhookProcessing } from "../../../lib/inngest";
+import { getWebhookSource, insertWebhookEvent } from "@/app/lib/db";
+import { enqueueWebhookProcessing } from "@/app/lib/inngest";
 
+/**
+ * GitHub envia o ID do evento no header `x-github-delivery`.
+ * A assinatura vem no header `x-hub-signature-256` no formato "sha256=<hex>".
+ */
 export async function POST(req: NextRequest) {
   try {
     const rawBody = await req.text();
     const signature = req.headers.get("x-hub-signature-256");
-    const event = req.headers.get("x-github-event");
+    const eventType = req.headers.get("x-github-event");
+    const deliveryHeader = req.headers.get("x-github-delivery");
 
     if (!signature) {
       return NextResponse.json(
@@ -15,8 +22,7 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-
-    if (!event) {
+    if (!eventType) {
       return NextResponse.json(
         { error: "Tipo de evento do GitHub ausente" },
         { status: 400 }
@@ -39,9 +45,8 @@ export async function POST(req: NextRequest) {
     }
 
     const payload = JSON.parse(rawBody);
-    const eventId = payload.delivery || payload.id || `${event}_${Date.now()}`;
-    const eventType = event;
-
+    const eventId =
+      deliveryHeader || payload.id || `${eventType}_${Date.now()}`;
     const requestHeaders = Object.fromEntries(req.headers.entries());
 
     const { alreadyExists, event: webhookEvent } = await insertWebhookEvent({
@@ -88,19 +93,16 @@ function verifyGitHubSignature(
   signature: string | null,
   secret: string
 ): boolean {
-  if (!signature || !signature.startsWith("sha256=")) {
-    return false;
-  }
+  if (!signature || !signature.startsWith("sha256=")) return false;
+  const expected =
+    "sha256=" +
+    crypto.createHmac("sha256", secret).update(body, "utf8").digest("hex");
 
-  const hmac = crypto.createHmac("sha256", secret);
-  const digest = `sha256=${hmac.update(body, "utf8").digest("hex")}`;
+  const a = Buffer.from(signature);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
 
-  // DEBUG: Adicione estes logs temporariamente
-  console.log("Signature recebida:", signature);
-  console.log("Signature calculada:", digest);
-  console.log("Secret usado:", secret);
-
-  return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(digest));
+  return crypto.timingSafeEqual(a, b);
 }
 
 export async function GET() {

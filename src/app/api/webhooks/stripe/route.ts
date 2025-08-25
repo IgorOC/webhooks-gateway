@@ -1,14 +1,19 @@
-import { NextRequest, NextResponse } from "next/server";
-import crypto from "crypto";
-import { getWebhookSource, insertWebhookEvent } from "../../../lib/db";
-import { enqueueWebhookProcessing } from "../../../lib/inngest";
+export const runtime = "nodejs";
 
+import { NextRequest, NextResponse } from "next/server";
+import Stripe from "stripe";
+import { getWebhookSource, insertWebhookEvent } from "@/app/lib/db";
+import { enqueueWebhookProcessing } from "@/app/lib/inngest";
+
+/**
+ * Stripe: use o SDK para verificar assinatura (recomendado).
+ * Precisa de raw body (req.text()) e do header `stripe-signature` no formato "t=<ts>,v1=<hmac>".
+ * O secret deve ser o endpoint secret de webhook do Stripe (whsec_...).
+ */
 export async function POST(req: NextRequest) {
   try {
-    const rawBody = await req.text();
-    const signature = req.headers.get("stripe-signature");
-
-    if (!signature) {
+    const sig = req.headers.get("stripe-signature");
+    if (!sig) {
       return NextResponse.json(
         { error: "Assinatura do Stripe ausente" },
         { status: 400 }
@@ -23,26 +28,29 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!verifyStripeSignature(rawBody, signature, source.secret)) {
-      return NextResponse.json(
-        { error: "Assinatura inválida" },
-        { status: 401 }
-      );
-    }
+    const rawBody = await req.text();
 
-    const payload = JSON.parse(rawBody);
-    const eventId = payload.id;
-    const eventType = payload.type;
+    // A apiVersion é opcional para verificação de webhooks; remover evita conflito de tipos
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "sk_test_dummy");
 
+    // Verifica a assinatura com o endpoint secret do Stripe
+    const event = await stripe.webhooks.constructEventAsync(
+      rawBody,
+      sig,
+      source.secret
+    );
+
+    const eventId = event.id;
+    const eventType = event.type;
     const requestHeaders = Object.fromEntries(req.headers.entries());
 
-    const { alreadyExists, event } = await insertWebhookEvent({
+    const { alreadyExists, event: saved } = await insertWebhookEvent({
       sourceId: source.id,
       eventId,
       eventType,
-      payload,
+      payload: event,
       headers: requestHeaders,
-      signature,
+      signature: sig,
     });
 
     if (alreadyExists) {
@@ -53,8 +61,8 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    if (event) {
-      await enqueueWebhookProcessing(event.id);
+    if (saved) {
+      await enqueueWebhookProcessing(saved.id);
     }
 
     return NextResponse.json({
@@ -63,48 +71,20 @@ export async function POST(req: NextRequest) {
       eventType,
       message: "Webhook enfileirado para processamento",
     });
-  } catch (error) {
-    console.error("Erro no webhook do Stripe:", error);
+  } catch (error: unknown) {
+    // Narrowing seguro
+    const err = error as { type?: string; message?: string };
+    console.error("Erro no webhook do Stripe:", err);
+
+    // Stripe recomenda 400 para falha de verificação de assinatura
+    const status = err?.type === "StripeSignatureVerificationError" ? 400 : 500;
     return NextResponse.json(
       {
         error: "Falha no processamento do webhook",
-        details: error instanceof Error ? error.message : "Erro desconhecido",
+        details: err?.message || "Erro desconhecido",
       },
-      { status: 500 }
+      { status }
     );
-  }
-}
-
-function verifyStripeSignature(
-  body: string,
-  signature: string,
-  secret: string
-): boolean {
-  try {
-    const elements = signature.split(",");
-    const signatureElements: Record<string, string> = {};
-
-    elements.forEach((element) => {
-      const [key, value] = element.split("=");
-      signatureElements[key] = value;
-    });
-
-    const timestamp = signatureElements.t;
-    const sig = signatureElements.v1;
-
-    if (!timestamp || !sig) {
-      return false;
-    }
-
-    const payload = `${timestamp}.${body}`;
-    const computedSig = crypto
-      .createHmac("sha256", secret)
-      .update(payload, "utf8")
-      .digest("hex");
-
-    return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(computedSig));
-  } catch {
-    return false;
   }
 }
 

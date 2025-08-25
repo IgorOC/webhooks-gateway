@@ -11,9 +11,10 @@ interface WebhookEvent {
   retry_count: number;
   received_at: string;
   processed_at?: string;
-  webhook_sources: {
+  source_name?: string; // Campo do JOIN
+  webhook_sources?: {
     name: string;
-  };
+  }; // Manter para compatibilidade
 }
 
 export default function WebhooksPage() {
@@ -161,7 +162,7 @@ export default function WebhooksPage() {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800 capitalize">
-                      {event.webhook_sources?.name || "Desconhecido"}
+                      {event.source_name || "Desconhecido"}
                     </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">

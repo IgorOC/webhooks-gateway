@@ -1,8 +1,13 @@
+export const runtime = "nodejs";
+
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
-import { getWebhookSource, insertWebhookEvent } from "../../../lib/db";
-import { enqueueWebhookProcessing } from "../../../lib/inngest";
+import { getWebhookSource, insertWebhookEvent } from "@/app/lib/db";
+import { enqueueWebhookProcessing } from "@/app/lib/inngest";
 
+/**
+ * Resend envia header `resend-signature` no formato "sha256=<hex>" (HMAC do body).
+ */
 export async function POST(req: NextRequest) {
   try {
     const rawBody = await req.text();
@@ -31,9 +36,9 @@ export async function POST(req: NextRequest) {
     }
 
     const payload = JSON.parse(rawBody);
-    const eventId = payload.data?.email_id || `${payload.type}_${Date.now()}`;
-    const eventType = payload.type;
-
+    const eventId =
+      payload?.data?.email_id || `${payload?.type || "unknown"}_${Date.now()}`;
+    const eventType = payload?.type || "unknown";
     const requestHeaders = Object.fromEntries(req.headers.entries());
 
     const { alreadyExists, event } = await insertWebhookEvent({
@@ -80,21 +85,20 @@ function verifyResendSignature(
   signature: string,
   secret: string
 ): boolean {
-  try {
-    const expectedSignature = crypto
-      .createHmac("sha256", secret)
-      .update(body, "utf8")
-      .digest("hex");
+  // signature pode vir com prefixo "sha256="
+  const receivedHex = signature.startsWith("sha256=")
+    ? signature.slice(7)
+    : signature;
+  const expectedHex = crypto
+    .createHmac("sha256", secret)
+    .update(body, "utf8")
+    .digest("hex");
 
-    const receivedSignature = signature.replace("sha256=", "");
+  const a = Buffer.from(receivedHex);
+  const b = Buffer.from(expectedHex);
+  if (a.length !== b.length) return false;
 
-    return crypto.timingSafeEqual(
-      Buffer.from(expectedSignature),
-      Buffer.from(receivedSignature)
-    );
-  } catch {
-    return false;
-  }
+  return crypto.timingSafeEqual(a, b);
 }
 
 export async function GET() {

@@ -1,9 +1,11 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient} from "@supabase/supabase-js";
+
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 export const db = createClient(supabaseUrl, supabaseServiceKey);
+
 
 export interface WebhookSource {
   id: string;
@@ -15,6 +17,8 @@ export interface WebhookSource {
   updated_at: string;
 }
 
+export type WebhookStatus = "received" | "verified" | "processed" | "failed";
+
 export interface WebhookEvent {
   id: string;
   source_id: string;
@@ -23,7 +27,7 @@ export interface WebhookEvent {
   signature: string;
   payload: unknown;
   headers: unknown;
-  status: "received" | "verified" | "processed" | "failed";
+  status: WebhookStatus;
   error_message?: string;
   retry_count: number;
   received_at: string;
@@ -32,17 +36,33 @@ export interface WebhookEvent {
   updated_at: string;
 }
 
+/** Tipo auxiliar para quando o select embute a tabela relacionada */
+type WebhookEventWithSourceRel = WebhookEvent & {
+  webhook_sources?: { name?: string } | null;
+};
+
+/** Tipo do retorno transformado com o campo `source_name` já “achatado” */
+export type WebhookEventWithSourceName = WebhookEvent & {
+  source_name: string;
+};
+
+/** ---------------- Fontes ---------------- */
+
 export async function getWebhookSource(
   name: string
 ): Promise<WebhookSource | null> {
-  const { data } = await db
+  const { data, error } = await db
     .from("webhook_sources")
     .select("*")
     .eq("name", name)
     .eq("is_active", true)
     .single();
+
+  if (error) return null;
   return data;
 }
+
+/** ---------------- Eventos ---------------- */
 
 export async function insertWebhookEvent(params: {
   sourceId: string;
@@ -57,7 +77,7 @@ export async function insertWebhookEvent(params: {
     .select("id")
     .eq("source_id", params.sourceId)
     .eq("event_id", params.eventId)
-    .single();
+    .maybeSingle();
 
   if (existing) {
     return { alreadyExists: true, event: null };
@@ -72,7 +92,7 @@ export async function insertWebhookEvent(params: {
       payload: params.payload,
       headers: params.headers,
       signature: params.signature,
-      status: "received",
+      status: "received" as WebhookStatus,
       retry_count: 0,
     })
     .select()
@@ -84,25 +104,27 @@ export async function insertWebhookEvent(params: {
 export async function getWebhookEvent(
   id: string
 ): Promise<WebhookEvent | null> {
-  const { data } = await db
+  const { data, error } = await db
     .from("webhook_events")
     .select("*")
     .eq("id", id)
     .single();
+
+  if (error) return null;
   return data;
 }
 
 export async function updateWebhookStatus(
   id: string,
-  status: WebhookEvent["status"],
+  status: WebhookStatus,
   errorMessage?: string
 ): Promise<void> {
-  const updates: {
-    status: WebhookEvent["status"];
-    updated_at: string;
-    processed_at?: string;
-    error_message?: string;
-  } = {
+  const updates: Partial<
+    Pick<
+      WebhookEvent,
+      "status" | "updated_at" | "processed_at" | "error_message"
+    >
+  > = {
     status,
     updated_at: new Date().toISOString(),
   };
@@ -122,12 +144,20 @@ export async function updateWebhookStatus(
   await db.from("webhook_events").update(updates).eq("id", id);
 }
 
+
 export async function getWebhookEvents(filters?: {
-  status?: string;
-  source?: string;
+  status?: WebhookStatus;
+  source?: string; 
   limit?: number;
   offset?: number;
-}) {
+}): Promise<{
+  data: WebhookEventWithSourceName[] | null;
+  error: unknown;
+}> {
+
+  const limit = typeof filters?.limit === "number" ? filters.limit : 20;
+  const offset = typeof filters?.offset === "number" ? filters.offset : 0;
+
   let query = db
     .from("webhook_events")
     .select(
@@ -138,7 +168,8 @@ export async function getWebhookEvents(filters?: {
       )
     `
     )
-    .order("received_at", { ascending: false });
+    .order("received_at", { ascending: false })
+    .range(offset, offset + limit - 1);
 
   if (filters?.status) {
     query = query.eq("status", filters.status);
@@ -148,17 +179,60 @@ export async function getWebhookEvents(filters?: {
     query = query.eq("webhook_sources.name", filters.source);
   }
 
-  if (filters?.limit) {
-    query = query.limit(filters.limit);
-  }
+  const { data: relatedData, error: relatedError } = await query;
 
-  if (filters?.offset) {
-    query = query.range(
-      filters.offset,
-      filters.offset + (filters.limit || 10) - 1
+  if (!relatedError && relatedData) {
+    const transformed: WebhookEventWithSourceName[] = (relatedData as WebhookEventWithSourceRel[]).map(
+      (evt) => ({
+        ...evt,
+        source_name: evt.webhook_sources?.name ?? "Desconhecido",
+      })
     );
+    return { data: transformed, error: null };
   }
 
-  const { data, error } = await query;
-  return { data, error };
+  const sqlParts: string[] = [
+    `SELECT 
+       webhook_events.*,
+       webhook_sources.name AS source_name
+     FROM webhook_events
+     LEFT JOIN webhook_sources ON webhook_events.source_id = webhook_sources.id`,
+  ];
+
+  const whereClauses: string[] = [];
+  const params: Array<string | number> = [];
+
+  if (filters?.status) {
+    whereClauses.push(`webhook_events.status = $${params.length + 1}`);
+    params.push(filters.status);
+  }
+
+  if (filters?.source) {
+    whereClauses.push(`webhook_sources.name = $${params.length + 1}`);
+    params.push(filters.source);
+  }
+
+  if (whereClauses.length > 0) {
+    sqlParts.push(`WHERE ${whereClauses.join(" AND ")}`);
+  }
+
+  sqlParts.push(`ORDER BY webhook_events.received_at DESC`);
+  sqlParts.push(`LIMIT $${params.length + 1}`);
+  params.push(limit);
+  sqlParts.push(`OFFSET $${params.length + 1}`);
+  params.push(offset);
+
+  const rawSql = sqlParts.join("\n");
+
+  const { data: rpcData, error: rpcError } = await db.rpc("exec_sql", {
+    sql: rawSql,
+    params,
+  });
+
+  if (rpcError) {
+    return { data: null, error: relatedError ?? rpcError };
+  }
+
+  const casted = (rpcData as WebhookEventWithSourceName[]) ?? null;
+  return { data: casted, error: null };
 }

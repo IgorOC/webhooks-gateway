@@ -1,9 +1,11 @@
+export const runtime = "nodejs";
+
 import { NextRequest, NextResponse } from "next/server";
 import { getWebhookEvent, updateWebhookStatus } from "@/app/lib/db";
 import { enqueueWebhookProcessing } from "@/app/lib/inngest";
 
 export async function POST(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
