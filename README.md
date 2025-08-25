@@ -1,36 +1,139 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Gateway de Webhook
 
-## Getting Started
+Um sistema de manipulação de webhooks pronto para produção construído com Next.js, Supabase e Inngest. Gerencia webhooks do Stripe, GitHub, Resend e outros provedores com verificação de assinatura, idempotência e processamento assíncrono.
 
-First, run the development server:
+## Funcionalidades
+
+- **Verificação de Assinatura**: Validação HMAC para todos os provedores suportados
+- **Idempotência**: Previne processamento duplicado de eventos
+- **Processamento Assíncrono**: Processamento baseado em filas com tentativas automáticas
+- **Trilha de Auditoria Completa**: Histórico completo de eventos e rastreamento de status
+- **Dashboard Administrativo**: Interface web para monitoramento e reprocessamento de eventos falhados
+- **Suporte Multi-Provedor**: Adaptadores prontos para uso para serviços populares
+
+## Provedores Suportados
+
+- **Stripe**: Webhooks de pagamento com validação Stripe-Signature
+- **GitHub**: Webhooks de repositório com verificação HMAC SHA-256
+- **Resend**: Webhooks de entrega de email
+- Facilmente extensível para outros provedores
+
+## Início Rápido
+
+1. **Clone e instale dependências**
+
+```bash
+git clone <repo-url>
+cd webhook-gateway
+npm install
+```
+
+2. **Configure variáveis de ambiente**
+
+```bash
+cp .env.example .env.local
+```
+
+Preencha suas credenciais:
+
+- URL do projeto Supabase e chaves
+- Chaves do Inngest
+- Segredos de webhook para cada provedor
+
+3. **Configure o banco de dados**
+
+```bash
+# Execute a migração para criar tabelas
+npx supabase db push
+```
+
+4. **Atualize as fontes de webhook**
+
+Atualize a tabela `webhook_sources` no Supabase com seus segredos reais:
+
+```sql
+UPDATE webhook_sources SET secret = 'seu-segredo-stripe-real' WHERE name = 'stripe';
+UPDATE webhook_sources SET secret = 'seu-segredo-github-real' WHERE name = 'github';
+UPDATE webhook_sources SET secret = 'seu-segredo-resend-real' WHERE name = 'resend';
+```
+
+5. **Inicie o servidor de desenvolvimento**
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Uso
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Configure Webhooks dos Provedores
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Aponte seus provedores de webhook para estes endpoints:
 
-## Learn More
+- **Stripe**: `https://seudominio.com/api/webhooks/stripe`
+- **GitHub**: `https://seudominio.com/api/webhooks/github`
+- **Resend**: `https://seudominio.com/api/webhooks/resend`
 
-To learn more about Next.js, take a look at the following resources:
+### Monitore Eventos
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Visite `/webhooks` para ver o dashboard administrativo onde você pode:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- Ver todos os eventos de webhook
+- Filtrar por status e provedor
+- Reprocessar eventos falhados
+- Monitorar status de processamento
 
-## Deploy on Vercel
+## Endpoints da API
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- `GET /api/webhooks` - Listar eventos de webhook
+- `POST /api/webhooks/{provider}` - Receber webhooks
+- `POST /api/webhooks/replay/{id}` - Reprocessar evento específico
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Arquitetura
+
+```
+Provedor de Webhook → Rota da API → Verificação de Assinatura → Banco de Dados → Fila Inngest → Processamento
+```
+
+1. **Webhook recebido** no endpoint específico do provedor
+2. **Assinatura validada** usando método do provedor
+3. **Evento armazenado** no banco de dados com verificação de idempotência
+4. **Job enfileirado** para processamento assíncrono
+5. **Processamento gerenciado** pelo Inngest com tentativas
+
+## Schema do Banco de Dados
+
+### webhook_sources
+
+- Armazena configurações de provedores e segredos
+
+### webhook_events
+
+- Armazena todos os eventos de webhook recebidos
+- Rastreia status de processamento e tentativas
+- Mantém trilha de auditoria completa
+
+## Extensão
+
+Adicione novos provedores:
+
+1. Criando nova rota: `src/app/api/webhooks/[provider]/route.ts`
+2. Adicionando lógica de verificação de assinatura
+3. Adicionando provedor ao banco: `INSERT INTO webhook_sources...`
+4. Atualizando lógica de processamento em `lib/inngest/functions.ts`
+
+## Testes
+
+```bash
+npm run test
+```
+
+## Deploy
+
+Faça deploy para Vercel, Railway ou qualquer plataforma de hospedagem Node.js. Certifique-se de:
+
+1. Definir todas as variáveis de ambiente
+2. Executar migrações do banco de dados
+3. Configurar endpoint webhook do Inngest
+4. Atualizar URLs de webhook nos dashboards dos provedores
+
+

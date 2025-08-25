@@ -6,32 +6,24 @@ import { enqueueWebhookProcessing } from "../../../lib/inngest";
 export async function POST(req: NextRequest) {
   try {
     const rawBody = await req.text();
-    const signature = req.headers.get("x-hub-signature-256");
-    const event = req.headers.get("x-github-event");
+    const signature = req.headers.get("resend-signature");
 
     if (!signature) {
       return NextResponse.json(
-        { error: "Assinatura do GitHub ausente" },
+        { error: "Assinatura do Resend ausente" },
         { status: 400 }
       );
     }
 
-    if (!event) {
-      return NextResponse.json(
-        { error: "Tipo de evento do GitHub ausente" },
-        { status: 400 }
-      );
-    }
-
-    const source = await getWebhookSource("github");
+    const source = await getWebhookSource("resend");
     if (!source) {
       return NextResponse.json(
-        { error: "Fonte de webhook do GitHub não configurada" },
+        { error: "Fonte de webhook do Resend não configurada" },
         { status: 500 }
       );
     }
 
-    if (!verifyGitHubSignature(rawBody, signature, source.secret)) {
+    if (!verifyResendSignature(rawBody, signature, source.secret)) {
       return NextResponse.json(
         { error: "Assinatura inválida" },
         { status: 401 }
@@ -39,12 +31,12 @@ export async function POST(req: NextRequest) {
     }
 
     const payload = JSON.parse(rawBody);
-    const eventId = payload.delivery || payload.id || `${event}_${Date.now()}`;
-    const eventType = event;
+    const eventId = payload.data?.email_id || `${payload.type}_${Date.now()}`;
+    const eventType = payload.type;
 
     const requestHeaders = Object.fromEntries(req.headers.entries());
 
-    const { alreadyExists, event: webhookEvent } = await insertWebhookEvent({
+    const { alreadyExists, event } = await insertWebhookEvent({
       sourceId: source.id,
       eventId,
       eventType,
@@ -61,8 +53,8 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    if (webhookEvent) {
-      await enqueueWebhookProcessing(webhookEvent.id);
+    if (event) {
+      await enqueueWebhookProcessing(event.id);
     }
 
     return NextResponse.json({
@@ -72,7 +64,7 @@ export async function POST(req: NextRequest) {
       message: "Webhook enfileirado para processamento",
     });
   } catch (error) {
-    console.error("Erro no webhook do GitHub:", error);
+    console.error("Erro no webhook do Resend:", error);
     return NextResponse.json(
       {
         error: "Falha no processamento do webhook",
@@ -83,24 +75,31 @@ export async function POST(req: NextRequest) {
   }
 }
 
-function verifyGitHubSignature(
+function verifyResendSignature(
   body: string,
-  signature: string | null,
+  signature: string,
   secret: string
 ): boolean {
-  if (!signature || !signature.startsWith("sha256=")) {
+  try {
+    const expectedSignature = crypto
+      .createHmac("sha256", secret)
+      .update(body, "utf8")
+      .digest("hex");
+
+    const receivedSignature = signature.replace("sha256=", "");
+
+    return crypto.timingSafeEqual(
+      Buffer.from(expectedSignature),
+      Buffer.from(receivedSignature)
+    );
+  } catch {
     return false;
   }
-
-  const hmac = crypto.createHmac("sha256", secret);
-  const digest = `sha256=${hmac.update(body, "utf8").digest("hex")}`;
-
-  return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(digest));
 }
 
 export async function GET() {
   return NextResponse.json({
-    message: "Endpoint de webhook do GitHub está funcionando",
+    message: "Endpoint de webhook do Resend está funcionando",
     timestamp: new Date().toISOString(),
   });
 }
